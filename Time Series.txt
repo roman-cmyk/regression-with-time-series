@@ -1,0 +1,164 @@
+* Problem Set 3
+version 14.2
+capture log close
+set more off
+
+clear
+cd "C:\Users\txd111330\Downloads"
+
+* Question 1
+* open time series data
+use "copper data", clear
+describe
+tsset year 
+
+* Part a: basic OLS
+ge lnC = ln(c)
+ge lnI = ln(i)
+ge lnL = ln(l)
+ge lnH = ln(h) 
+ge lnA = ln(a)
+
+regress lnC lnI lnL lnH lnA
+
+* Part b: discover autocorrelation
+* Calculate the correlation coefficient between the current and lagged residuals
+predict ehat, res
+reg ehat lnI lnL lnH lnA L.ehat
+
+* Construct the correlogram of the residuals
+ac ehat, lags(12)  generate(ac_ehat)
+
+* Mannually conduct the Lagrange Multiplier (Breausch-Godfrey test)
+disp e(N)*e(r2)
+disp chi2tail(1, 8.5073029)
+drop ehat
+
+* Automated Stata command
+quietly reg lnC lnI lnL lnH lnA
+estat bgodfrey, lags(1 2 3 4 5)
+
+* Part c: estimate the model with HAC(Newey-West)
+scalar B = round(4*(e(N)/100)^(2/9))
+scalar list B
+newey lnC lnI lnL lnH lnA, lag(3)
+
+* Part d: estimate using the Stata built-in commands both
+* a Cochrane-Orcutt and a Prais-Winsten version of this model 
+prais lnC lnI lnL lnH lnA, corc
+prais lnC lnI lnL lnH lnA
+
+* Question 2
+
+reg lnC lnI lnL lnH lnA if year > 1951
+estimates store OLS
+estat bgodfrey, lags(1 2 3 4 5)
+
+* a. ARDL(0,1)
+reg lnC lnI lnL lnH lnA L.lnA if year > 1951
+estimates store ARDL01
+estat bgodfrey, lags(1 2 3 4 5)
+
+* ARDL(1,0)
+reg lnC L.lnC lnI lnL lnH lnA if year > 1951
+estimates store ARDL10
+estat bgodfrey, lags(1 2 3 4 5)
+
+* ARDL(1,1)
+reg lnC L.lnC lnI lnL lnH lnA L.lnA if year > 1951
+estimates store ARDL11
+estat bgodfrey, lags(1 2 3 4 5)
+
+estimates table OLS ARDL01 ARDL10 ARDL11, b(%9.3f) stfmt(%9.3f) se stats(N aic bic)
+
+* Question 3
+* a. Forecast lnA for three periods using AR(2) model
+reg lnA L(1/2).lnA 
+scalar lnAhat1 = _b[_cons] + _b[L1.lnA]*lnA[30] + _b[L2.lnA]*lnA[29]
+scalar lnAhat2 = _b[_cons] + _b[L1.lnA]*lnAhat1 + _b[L2.lnA]*lnA[30]
+scalar lnAhat3 = _b[_cons] + _b[L1.lnA]*lnAhat2 + _b[L2.lnA]*lnAhat1
+scalar list lnAhat1 lnAhat2 lnAhat3
+
+* b. Construct 95% interval estimates
+scalar var = e(rmse)^2
+scalar se1 = sqrt(var)
+scalar se2 = sqrt(var*(1+(_b[L1.lnA])^2))
+scalar se3 = sqrt(var*((_b[L1.lnA]^2+_b[L2.lnA])^2+1+_b[L1.lnA]^2))
+scalar list se1 se2 se3 
+
+
+scalar lnA1L = lnAhat1 - invttail(e(df_r),.025)*se1
+scalar lnA1U = lnAhat1 + invttail(e(df_r),.025)*se1
+
+scalar lnA2L = lnAhat2 - invttail(e(df_r),.025)*se2
+scalar lnA2U = lnAhat2 + invttail(e(df_r),.025)*se2
+
+scalar lnA3L = lnAhat3 - invttail(e(df_r),.025)*se3
+scalar lnA3U = lnAhat3 + invttail(e(df_r),.025)*se3
+
+scalar list lnA1L lnA1U lnA2L lnA2U lnA3L lnA3U
+
+* Question 4
+* put forecast in cell after last time slot
+tsappend, add(1)
+
+* Exponential Smoothing
+* a. report the alpha that Stata uses
+tssmooth exponential lnAf=lnA, forecast(1)
+
+tssmooth exponential sm1=lnA, parms(.9998)
+tsline lnA sm1 , legend(lab (1 "lnA") lab(2 "lnAhat")) title(alpha=0.9998) lpattern(solid dash)
+scalar f1 = .998*lnA[30]+(1-.998)*sm1[30]
+scalar list f1 
+list sm1 in 31
+
+* b. Use alpha = 0.60
+tssmooth exponential sm2=lnA, parms(0.60)
+tsline lnA sm2, legend(lab (1 "lnA") lab(2 "lnAhat")) title(alpha=0.60) lpattern(solid dash)
+scalar f2 = 0.60*lnA[30] + (1-0.60)*sm2[30]
+scalar list f2
+list sm2 in 31
+
+* Question 5
+* a. Predict the model
+regress lnC lnI
+
+* Test serial correlation using LM test
+predict ehat, residuals
+reg ehat lnI L.ehat
+disp e(N)*e(r2)
+di chi2tail(1, 10.665546)
+
+* b. Create graphs
+qui tsline lnC, name(lnC, replace)  
+qui tsline D.lnC, name(dlnC, replace) 
+graph combine lnC dlnC
+
+qui tsline lnI, name(lnI, replace)  
+qui tsline D.lnI, name(dlnI, replace) 
+graph combine lnI dlnI
+
+* d. Dickey-Fuller test
+regress D.lnC L.lnC 
+estat bgodfrey
+
+regress D.lnI L.lnI 
+estat bgodfrey
+
+* e. Use the ADF test with no lags
+dfuller D.lnC, noconstant lags(0)
+dfuller D.lnI, noconstant lags(0)
+
+* f. Test for cointergration at 0.10 level of significance
+regress lnC lnI
+predict ehat, residual
+
+/* To determine if we need to include lag terms in the cointegration
+test we need to find out if there is autocorrelation to be accounted for
+*/
+
+regress D.ehat L.ehat , noconstant
+estat bgodfrey
+
+regress D.ehat L.ehat L.D.ehat, noconstant
+estat bgodfrey
